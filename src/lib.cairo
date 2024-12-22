@@ -1,1 +1,4 @@
-pub mod lottery;
+mod lottery;
+
+#[cfg(test)]
+mod tests;
