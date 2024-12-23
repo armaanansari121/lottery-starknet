@@ -2,7 +2,9 @@ use starknet::{ContractAddress};
 
 #[starknet::interface]
 trait ILottery<TContractState> {
+    fn fund_oracle_fees(ref self: TContractState);
     fn enroll(ref self: TContractState);
+    fn withdraw_oracle_fees(ref self: TContractState);
     fn get_balance(self: @TContractState) -> u256;
     fn get_participants(self: @TContractState) -> Array<ContractAddress>;
 }
@@ -46,14 +48,24 @@ mod lottery {
     impl OwnableImpl = OwnableComponent::OwnableImpl<ContractState>;
     impl InternalImpl = OwnableComponent::InternalImpl<ContractState>;
 
+    #[derive(Copy, Drop, Serde, starknet::Store, PartialEq)]
+    enum State {
+        #[default]
+        Declared,
+        Funded,
+        WinnerSelected,
+        Closed,
+    }
+
     #[storage]
     struct Storage {
         manager: ContractAddress,
         participants: Vec<ContractAddress>,
         token: ContractAddress,
-        fees: u256,
+        participant_fees: u256,
         winner: ContractAddress,
-        active: bool,
+        state: State,
+        // PragmaVRFOracle variables
         pragma_vrf_contract_address: ContractAddress,
         min_block_number_storage: u64,
         last_random_number: felt252,
@@ -85,42 +97,70 @@ mod lottery {
     fn constructor(
         ref self: ContractState,
         manager: ContractAddress,
-        fees: u256,
+        participant_fees: u256,
         token_address: ContractAddress,
         pragma_vrf_contract_address: ContractAddress,
     ) {
         self.ownable.initializer(manager);
         self.manager.write(manager);
-        self.fees.write(fees);
+        self.participant_fees.write(participant_fees);
         self.token.write(token_address);
         self.pragma_vrf_contract_address.write(pragma_vrf_contract_address);
-        self.active.write(true);
     }
 
     #[abi(embed_v0)]
     impl ILottery of super::ILottery<ContractState> {
+        fn fund_oracle_fees(ref self: ContractState) {
+            self.ownable.assert_only_owner();
+
+            assert!(self.state.read() == State::Declared, "Lottery is funded");
+            
+            // Check if caller has enough balance
+            let caller = get_caller_address();
+            let token = IERC20Dispatcher { contract_address: self.token.read() };
+            let balance = token.balance_of(caller);
+            let randomness_fees = 20_000_000_000_000_000;
+            assert!(balance >= randomness_fees, "Owner does not have enough balance");
+
+            // Check if contract has enough allowance to spend fees
+            let this = get_contract_address();
+            let allowance = token.allowance(caller, this);
+            assert!(
+                allowance >= randomness_fees,
+                "Contract does not have enough allowance to spend fees",
+            );
+
+            // Transfer fees to contract
+            let success = token.transfer_from(caller, this, randomness_fees);
+            assert!(success, "Transfer failed");
+
+            // Update state
+            self.state.write(State::Funded);
+        }
+
         fn enroll(ref self: ContractState) {
-            assert!(self.active.read(), "Lottery is not active");
+            assert!(self.state.read() == State::Funded, "Lottery is not active");
 
             // Check if caller is enrolled
             let caller = get_caller_address();
             assert!(!self._already_enrolled(caller), "Caller is already enrolled");
 
-            // Transfer fees to contract
+            // Check if caller has enough balance
             let token = IERC20Dispatcher { contract_address: self.token.read() };
             let balance = token.balance_of(caller);
-            assert!(balance >= self.fees.read(), "Caller does not have enough balance");
+            let participant_fees = self.participant_fees.read();
+            assert!(balance >= participant_fees, "Caller does not have enough balance");
 
-            // Approve contract to transfer fees
+            // Check if contract has enough allowance to spend fees
             let this = get_contract_address();
             let allowance = token.allowance(caller, this);
             assert!(
-                allowance >= self.fees.read(),
+                allowance >= participant_fees,
                 "Contract does not have enough allowance to spend fees",
             );
 
             // Transfer fees to contract
-            let success = token.transfer_from(caller, this, self.fees.read());
+            let success = token.transfer_from(caller, this, participant_fees);
             assert!(success, "Transfer failed");
 
             // Add caller to participants
@@ -128,9 +168,23 @@ mod lottery {
             self.emit(ParticipantEnrolled { participant: caller });
         }
 
+        fn withdraw_oracle_fees(ref self: ContractState) {
+            self.ownable.assert_only_owner();
+            assert!(self.state.read() == State::WinnerSelected, "Lottery is not over");
+            let token = IERC20Dispatcher { contract_address: self.token.read() };
+            let this = get_contract_address();
+            let balance = token.balance_of(this);
+            let success = token.transfer(self.manager.read(), balance);
+            assert!(success, "Transfer failed");
+            self.state.write(State::Closed);
+        }
+
         fn get_balance(self: @ContractState) -> u256 {
             // Get balance of contract
-            self.participants.len().into() * self.fees.read()
+            let token = IERC20Dispatcher { contract_address: self.token.read() };
+            let this = get_contract_address();
+            let balance = token.balance_of(this);
+            balance
         }
 
         fn get_participants(self: @ContractState) -> Array<ContractAddress> {
@@ -156,11 +210,14 @@ mod lottery {
 
         fn _get_winner(ref self: ContractState) {
             // Check if lottery is active
-            assert!(self.active.read(), "Lottery is not active");
+            assert!(self.state.read() == State::Funded, "Lottery is not active");
+
+            let number_of_participants = self.participants.len().into();
+            let participant_fees = self.participant_fees.read();
 
             // Get winner
             let random_number: u256 = self.last_random_number.read().into();
-            let reduced_random_number: u64 = (random_number % self.participants.len().into())
+            let reduced_random_number: u64 = (random_number % number_of_participants)
                 .try_into()
                 .unwrap();
             let winner = self.participants.at(reduced_random_number).read();
@@ -168,8 +225,7 @@ mod lottery {
 
             // Transfer winnings to winner
             let token = IERC20Dispatcher { contract_address: self.token.read() };
-            let this = get_contract_address();
-            let winnings = token.balance_of(this);
+            let winnings = number_of_participants * participant_fees;
             let success = token.transfer(winner, winnings);
             assert!(success, "Transfer failed");
 
@@ -177,7 +233,7 @@ mod lottery {
             self.emit(WinnerSelected { winner, amount: winnings });
 
             // Close lottery
-            self.active.write(false);
+            self.state.write(State::WinnerSelected);
         }
     }
 
@@ -197,6 +253,8 @@ mod lottery {
             calldata: Array<felt252>,
         ) {
             self.ownable.assert_only_owner();
+
+            assert!(self.state.read() == State::Funded, "Lottery is not active");
 
             let randomness_contract_address = self.pragma_vrf_contract_address.read();
             let randomness_dispatcher = IRandomnessDispatcher {
