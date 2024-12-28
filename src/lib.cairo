@@ -1,1 +1,2 @@
 mod lottery;
+mod factory;
