@@ -1,8 +1,7 @@
 use starknet::{ContractAddress};
 
 #[starknet::interface]
-trait ILottery<TContractState> {
-    fn fund_oracle_fees(ref self: TContractState);
+pub trait ILottery<TContractState> {
     fn enroll(ref self: TContractState);
     fn withdraw_oracle_fees(ref self: TContractState);
     fn get_balance(self: @TContractState) -> u256;
@@ -30,7 +29,7 @@ pub trait IPragmaVRF<TContractState> {
 }
 
 #[starknet::contract]
-mod lottery {
+mod Lottery {
     use starknet::{
         ContractAddress, get_caller_address, get_contract_address, get_block_number,
         contract_address_const,
@@ -51,15 +50,14 @@ mod lottery {
     #[derive(Copy, Drop, Serde, starknet::Store, PartialEq)]
     enum State {
         #[default]
-        Declared,
-        Funded,
+        Active,
         WinnerSelected,
         Closed,
     }
 
     #[storage]
     struct Storage {
-        manager: ContractAddress,
+        owner: ContractAddress,
         participants: Vec<ContractAddress>,
         token: ContractAddress,
         participant_fees: u256,
@@ -96,13 +94,13 @@ mod lottery {
     #[constructor]
     fn constructor(
         ref self: ContractState,
-        manager: ContractAddress,
+        owner: ContractAddress,
         participant_fees: u256,
         token_address: ContractAddress,
         pragma_vrf_contract_address: ContractAddress,
     ) {
-        self.ownable.initializer(manager);
-        self.manager.write(manager);
+        self.ownable.initializer(owner);
+        self.owner.write(owner);
         self.participant_fees.write(participant_fees);
         self.token.write(token_address);
         self.pragma_vrf_contract_address.write(pragma_vrf_contract_address);
@@ -110,36 +108,8 @@ mod lottery {
 
     #[abi(embed_v0)]
     impl ILottery of super::ILottery<ContractState> {
-        fn fund_oracle_fees(ref self: ContractState) {
-            self.ownable.assert_only_owner();
-
-            assert!(self.state.read() == State::Declared, "Lottery is funded");
-            
-            // Check if caller has enough balance
-            let caller = get_caller_address();
-            let token = IERC20Dispatcher { contract_address: self.token.read() };
-            let balance = token.balance_of(caller);
-            let randomness_fees = 20_000_000_000_000_000;
-            assert!(balance >= randomness_fees, "Owner does not have enough balance");
-
-            // Check if contract has enough allowance to spend fees
-            let this = get_contract_address();
-            let allowance = token.allowance(caller, this);
-            assert!(
-                allowance >= randomness_fees,
-                "Contract does not have enough allowance to spend fees",
-            );
-
-            // Transfer fees to contract
-            let success = token.transfer_from(caller, this, randomness_fees);
-            assert!(success, "Transfer failed");
-
-            // Update state
-            self.state.write(State::Funded);
-        }
-
         fn enroll(ref self: ContractState) {
-            assert!(self.state.read() == State::Funded, "Lottery is not active");
+            assert!(self.state.read() == State::Active, "Lottery is not active");
 
             // Check if caller is enrolled
             let caller = get_caller_address();
@@ -171,10 +141,11 @@ mod lottery {
         fn withdraw_oracle_fees(ref self: ContractState) {
             self.ownable.assert_only_owner();
             assert!(self.state.read() == State::WinnerSelected, "Lottery is not over");
-            let token = IERC20Dispatcher { contract_address: self.token.read() };
+            let ETH = contract_address_const::<0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7>();
+            let token = IERC20Dispatcher { contract_address: ETH };
             let this = get_contract_address();
             let balance = token.balance_of(this);
-            let success = token.transfer(self.manager.read(), balance);
+            let success = token.transfer(self.owner.read(), balance);
             assert!(success, "Transfer failed");
             self.state.write(State::Closed);
         }
@@ -210,7 +181,7 @@ mod lottery {
 
         fn _get_winner(ref self: ContractState) {
             // Check if lottery is active
-            assert!(self.state.read() == State::Funded, "Lottery is not active");
+            assert!(self.state.read() == State::Active, "Lottery is not active");
 
             let number_of_participants = self.participants.len().into();
             let participant_fees = self.participant_fees.read();
@@ -254,7 +225,7 @@ mod lottery {
         ) {
             self.ownable.assert_only_owner();
 
-            assert!(self.state.read() == State::Funded, "Lottery is not active");
+            assert!(self.state.read() == State::Active, "Lottery is not active");
 
             let randomness_contract_address = self.pragma_vrf_contract_address.read();
             let randomness_dispatcher = IRandomnessDispatcher {

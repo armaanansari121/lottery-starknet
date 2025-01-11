@@ -20,9 +20,7 @@ async function main() {
   let sierraCode, casmCode;
 
   try {
-    ({ sierraCode, casmCode } = await getCompiledCode(
-      "lottery_lottery"
-    ));
+    ({ sierraCode, casmCode } = await getCompiledCode("lottery_Factory"));
   } catch (error: any) {
     console.log("Failed to read contract files");
     process.exit(1);
@@ -30,10 +28,10 @@ async function main() {
 
   const myCallData = new CallData(sierraCode.abi);
   const constructor = myCallData.compile("constructor", {
-    manager: process.env.DEPLOYER_ADDRESS ?? "",
-    participant_fees: process.env.PARTICIPANT_FEES ?? "",
-    token_address: "0x049D36570D4e46f48e99674bd3fcc84644DdD6b96F7C741B1562B82f9e004dC7",
-    pragma_vrf_contract_address: "0x60c69136b39319547a4df303b6b3a26fab8b2d78de90b6bd215ce82e9cb515c"
+    owner: process.env.DEPLOYER_ADDRESS ?? "",
+    lottery_class_hash: process.env.LOTTERY_CLASS_HASH ?? "",
+    pragma_vrf_contract_address:
+      "0x60c69136b39319547a4df303b6b3a26fab8b2d78de90b6bd215ce82e9cb515c",
   });
   const deployResponse = await account0.declareAndDeploy({
     contract: sierraCode,

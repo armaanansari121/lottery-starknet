@@ -1,2 +1,2 @@
-mod lottery;
-mod factory;
+pub mod lottery;
+pub mod factory;

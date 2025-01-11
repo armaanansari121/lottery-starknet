@@ -18,5 +18,10 @@ assert_macros = "2.9.1"
 casm = true
 sierra = true
 
+[[tool.snforge.fork]]
+name = "SEPOLIA_LATEST"
+url = "https://starknet-sepolia.public.blastapi.io/rpc/v0_7"
+block_id.tag = "latest"
+
 [scripts]
 test = "snforge test"
