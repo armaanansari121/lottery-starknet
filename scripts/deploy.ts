@@ -29,6 +29,9 @@ async function main() {
   const myCallData = new CallData(sierraCode.abi);
   const constructor = myCallData.compile("constructor", {
     owner: process.env.DEPLOYER_ADDRESS ?? "",
+    // participant_fees: "1000000000000000000",
+    // token_address:
+    //   "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d",
     lottery_class_hash: process.env.LOTTERY_CLASS_HASH ?? "",
     pragma_vrf_contract_address:
       "0x60c69136b39319547a4df303b6b3a26fab8b2d78de90b6bd215ce82e9cb515c",

@@ -4,7 +4,7 @@ pub use starknet::{ContractAddress, ClassHash};
 pub trait ILotteryFactory<TContractState> {
     /// Create a new lottery contract
     fn create_lottery(
-        ref self: TContractState, token: ContractAddress, participant_fees: u256,
+        ref self: TContractState, token: ContractAddress, participant_fees: u256, salt: felt252
     ) -> ContractAddress;
 
     /// Get the lotteries contract addresses
@@ -77,7 +77,7 @@ pub mod Factory {
     #[abi(embed_v0)]
     impl Factory of super::ILotteryFactory<ContractState> {
         fn create_lottery(
-            ref self: ContractState, token: ContractAddress, participant_fees: u256,
+            ref self: ContractState, token: ContractAddress, participant_fees: u256, salt: felt252,
         ) -> ContractAddress {
             // Constructor arguments
             let mut constructor_calldata: Array::<felt252> = array![];
@@ -88,7 +88,7 @@ pub mod Factory {
 
             // Contract deployment
             let (deployed_address, _) = deploy_syscall(
-                self.lottery_class_hash.read(), 0, constructor_calldata.span(), false,
+                self.lottery_class_hash.read(), salt, constructor_calldata.span(), false,
             )
                 .unwrap();
 
