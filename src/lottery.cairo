@@ -1,17 +1,26 @@
-use starknet::{ContractAddress};
+use starknet::{ContractAddress, contract_address_const};
+
+#[derive(Copy, Drop, Serde, starknet::Store, PartialEq)]
+enum State {
+    #[default]
+    Active,
+    WinnerSelected,
+    Closed,
+}
 
 #[starknet::interface]
 pub trait ILottery<TContractState> {
     fn enroll(ref self: TContractState);
     fn withdraw_oracle_fees(ref self: TContractState);
-    fn get_balance(self: @TContractState) -> u256;
-    fn get_participants(self: @TContractState) -> Array<ContractAddress>;
+    fn get_lottery_details(
+        self: @TContractState,
+    ) -> (ContractAddress, Array<ContractAddress>, ContractAddress, u256, ContractAddress, State);
 }
 
 #[starknet::interface]
 pub trait IPragmaVRF<TContractState> {
     fn get_last_random_number(self: @TContractState) -> felt252;
-    fn request_randomness_from_pragma(
+    fn select_winner(
         ref self: TContractState,
         seed: u64,
         callback_fee_limit: u128,
@@ -28,18 +37,24 @@ pub trait IPragmaVRF<TContractState> {
     );
 }
 
+pub fn Factory() -> ContractAddress {
+    contract_address_const::<0x00cfd32cb1fe08669eaf6ec9c00935f5a03526a5bd38af62d26c3b574dd99412>()
+}
+
+pub fn ETH() -> ContractAddress {
+    contract_address_const::<0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7>()
+}
+
 #[starknet::contract]
 mod Lottery {
-    use starknet::{
-        ContractAddress, get_caller_address, get_contract_address, get_block_number,
-        contract_address_const,
-    };
+    use starknet::{ContractAddress, get_caller_address, get_contract_address, get_block_number};
     use starknet::storage::{
         StoragePointerWriteAccess, StoragePointerReadAccess, Vec, VecTrait, MutableVecTrait,
     };
     use pragma_lib::abi::{IRandomnessDispatcher, IRandomnessDispatcherTrait};
     use openzeppelin::access::ownable::OwnableComponent;
     use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
+    use super::{State, Factory, ETH};
 
     component!(path: OwnableComponent, storage: ownable, event: OwnableEvent);
 
@@ -47,13 +62,6 @@ mod Lottery {
     impl OwnableImpl = OwnableComponent::OwnableImpl<ContractState>;
     impl InternalImpl = OwnableComponent::InternalImpl<ContractState>;
 
-    #[derive(Copy, Drop, Serde, starknet::Store, PartialEq)]
-    enum State {
-        #[default]
-        Active,
-        WinnerSelected,
-        Closed,
-    }
 
     #[storage]
     struct Storage {
@@ -104,6 +112,9 @@ mod Lottery {
         self.participant_fees.write(participant_fees);
         self.token.write(token_address);
         self.pragma_vrf_contract_address.write(pragma_vrf_contract_address);
+
+        let callerFelt: felt252 = get_caller_address().try_into().unwrap();
+        assert!(get_caller_address() == Factory(), "Caller: {}", callerFelt);
     }
 
     #[abi(embed_v0)]
@@ -141,7 +152,7 @@ mod Lottery {
         fn withdraw_oracle_fees(ref self: ContractState) {
             self.ownable.assert_only_owner();
             assert!(self.state.read() == State::WinnerSelected, "Lottery is not over");
-            let ETH = contract_address_const::<0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7>();
+            let ETH = ETH();
             let token = IERC20Dispatcher { contract_address: ETH };
             let this = get_contract_address();
             let balance = token.balance_of(this);
@@ -150,20 +161,18 @@ mod Lottery {
             self.state.write(State::Closed);
         }
 
-        fn get_balance(self: @ContractState) -> u256 {
-            // Get balance of contract
-            let token = IERC20Dispatcher { contract_address: self.token.read() };
-            let this = get_contract_address();
-            let balance = token.balance_of(this);
-            balance
-        }
-
-        fn get_participants(self: @ContractState) -> Array<ContractAddress> {
-            let mut participants = ArrayTrait::new();
-            for i in 0..self.participants.len() {
-                participants.append(self.participants.at(i).read());
-            };
-            participants
+        fn get_lottery_details(
+            self: @ContractState,
+        ) -> (
+            ContractAddress, Array<ContractAddress>, ContractAddress, u256, ContractAddress, State,
+        ) {
+            let owner = self.owner.read();
+            let participants = self._get_participants();
+            let token = self.token.read();
+            let participant_fees = self.participant_fees.read();
+            let winner = self.winner.read();
+            let state = self.state.read();
+            (owner, participants, token, participant_fees, winner, state)
         }
     }
 
@@ -206,6 +215,22 @@ mod Lottery {
             // Close lottery
             self.state.write(State::WinnerSelected);
         }
+
+        fn _get_balance(self: @ContractState) -> u256 {
+            // Get balance of contract
+            let token = IERC20Dispatcher { contract_address: self.token.read() };
+            let this = get_contract_address();
+            let balance = token.balance_of(this);
+            balance
+        }
+
+        fn _get_participants(self: @ContractState) -> Array<ContractAddress> {
+            let mut participants = ArrayTrait::new();
+            for i in 0..self.participants.len() {
+                participants.append(self.participants.at(i).read());
+            };
+            participants
+        }
     }
 
     #[abi(embed_v0)]
@@ -215,7 +240,7 @@ mod Lottery {
             last_random
         }
 
-        fn request_randomness_from_pragma(
+        fn select_winner(
             ref self: ContractState,
             seed: u64,
             callback_fee_limit: u128,
@@ -235,9 +260,7 @@ mod Lottery {
             // Approve the randomness contract to transfer the callback fee
             // You would need to send some ETH to this contract first to cover the fees
             let eth_dispatcher = IERC20Dispatcher {
-                contract_address: contract_address_const::<
-                    0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7,
-                >() // ETH Contract Address
+                contract_address: ETH() // ETH Contract Address
             };
 
             eth_dispatcher

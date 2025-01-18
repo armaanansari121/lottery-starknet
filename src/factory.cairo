@@ -1,14 +1,21 @@
 pub use starknet::{ContractAddress, ClassHash};
 
+#[derive(Drop, Serde, starknet::Store)]
+struct LotteryDetails {
+    lottery_address: ContractAddress,
+    token: ContractAddress,
+    participant_fees: u256,
+}
+
 #[starknet::interface]
 pub trait ILotteryFactory<TContractState> {
     /// Create a new lottery contract
     fn create_lottery(
-        ref self: TContractState, token: ContractAddress, participant_fees: u256, salt: felt252
+        ref self: TContractState, token: ContractAddress, participant_fees: u256, salt: felt252,
     ) -> ContractAddress;
 
     /// Get the lotteries contract addresses
-    fn get_lotteries(self: @TContractState) -> Array<ContractAddress>;
+    fn get_lotteries(self: @TContractState) -> Array<LotteryDetails>;
 
     /// Update the pragma vrf contract address
     fn update_pragma_vrf_contract_address(
@@ -22,10 +29,14 @@ pub trait ILotteryFactory<TContractState> {
 #[starknet::contract]
 pub mod Factory {
     use OwnableComponent::InternalTrait;
-    use starknet::{ContractAddress, ClassHash, syscalls::deploy_syscall, get_caller_address, get_contract_address, contract_address_const};
+    use starknet::{
+        ContractAddress, ClassHash, syscalls::deploy_syscall, get_caller_address,
+        get_contract_address, contract_address_const,
+    };
     use starknet::storage::{
         StoragePointerWriteAccess, StoragePointerReadAccess, Vec, VecTrait, MutableVecTrait,
     };
+    use super::LotteryDetails;
     use openzeppelin::access::ownable::OwnableComponent;
     use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
 
@@ -42,7 +53,7 @@ pub mod Factory {
         /// Store the class hash of the contract to deploy
         lottery_class_hash: ClassHash,
         /// Deployed lottery contracts
-        deployed_lotteries: Vec<ContractAddress>,
+        deployed_lotteries: Vec<LotteryDetails>,
         #[substorage(v0)]
         ownable: OwnableComponent::Storage,
     }
@@ -93,12 +104,16 @@ pub mod Factory {
                 .unwrap();
 
             // Transfer oracle fees to the deployed contract
-            let ETH = contract_address_const::<0x49d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7>();
+            let ETH = contract_address_const::<
+                0x49d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7,
+            >();
             let token_dispatcher = IERC20Dispatcher { contract_address: ETH };
             let pragma_vrf_oracle_fees = 20_000_000_000_000_000;
             assert!(
                 token_dispatcher
-                    .allowance(get_caller_address(), get_contract_address()) >= pragma_vrf_oracle_fees,
+                    .allowance(
+                        get_caller_address(), get_contract_address(),
+                    ) >= pragma_vrf_oracle_fees,
                 "Contract does not have enough allowance to fund the oracle",
             );
             assert!(
@@ -110,7 +125,12 @@ pub mod Factory {
             assert!(success, "Failed to transfer oracle fees");
 
             // Store the address
-            self.deployed_lotteries.append().write(deployed_address);
+            self
+                .deployed_lotteries
+                .append()
+                .write(
+                    LotteryDetails { lottery_address: deployed_address, token, participant_fees },
+                );
 
             // Emit event
             self
@@ -121,7 +141,7 @@ pub mod Factory {
             deployed_address
         }
 
-        fn get_lotteries(self: @ContractState) -> Array<ContractAddress> {
+        fn get_lotteries(self: @ContractState) -> Array<LotteryDetails> {
             let mut lotteries = ArrayTrait::new();
             for i in 0..self.deployed_lotteries.len() {
                 lotteries.append(self.deployed_lotteries.at(i).read());

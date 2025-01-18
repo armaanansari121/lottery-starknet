@@ -4,14 +4,14 @@
   "main": "index.js",
   "scripts": {
     "deploy": "ts-node scripts/deploy.ts",
-    "get_balance": "ts-node scripts/get_balance.ts",
-    "enroll": "ts-node scripts/enroll.ts"
+    "classHash": "ts-node scripts/classHash.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@shardlabs/starknet-hardhat-plugin": "^0.8.0-alpha.5",
     "@tsconfig/node21": "21.0.3",
     "dotenv": "16.4.5",
     "starknet": "^7.0.0",
