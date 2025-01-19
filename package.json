@@ -4,7 +4,7 @@
   "main": "index.js",
   "scripts": {
     "deploy": "ts-node scripts/deploy.ts",
-    "classHash": "ts-node scripts/classHash.ts"
+    "invoke": "ts-node scripts/invoke.ts"
   },
   "keywords": [],
   "author": "",
