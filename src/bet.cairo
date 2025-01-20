@@ -123,7 +123,7 @@ mod BettingContract {
     use starknet::storage::{
         Map, StoragePathEntry, StoragePointerReadAccess, StoragePointerWriteAccess,
     };
-    
+
     #[storage]
     struct Storage {
         bets: Map<felt252, Bet>,

@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "deploy": "ts-node scripts/deploy.ts",
-    "invoke": "ts-node scripts/invoke.ts"
+    "deploy": "ts-node deployscripts/deploy.ts",
+    "invoke": "ts-node deployscripts/invoke.ts"
   },
   "keywords": [],
   "author": "",

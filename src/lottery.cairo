@@ -49,7 +49,7 @@ pub trait IPragmaVRF<TContractState> {
 }
 
 pub fn Factory() -> ContractAddress {
-    contract_address_const::<0x04705c729ba855f89f78bda5818ca6ba42e84728b95701474eef31b04e17d674>()
+    contract_address_const::<0x02f5814a6a3c29855972b58ae15f7ba2afa86ceb69a1f992a371e299402ca0d3>()
 }
 
 pub fn ETH() -> ContractAddress {
